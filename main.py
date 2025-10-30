@@ -1,56 +1,58 @@
 import time
 import mss
-import numpy as np
-import pyautogui
+from pynput.mouse import Controller, Button
 
 # ---------------- CONFIG ----------------
-x, y = 126, 266                # position to monitor
-idle_color = (34, 108, 168)    # blueish normal color
-target_color = (30, 151, 80)   # green color
-tolerance = 15                 # acceptable color difference
-poll_delay = 0.01              # how often to check (lower = faster)
-click_delay = 0.1              # delay after each click
+x, y = 126, 266                # pixel to monitor
+idle_color = (34, 108, 168)    # idle color
+target_color = (30, 151, 80)   # green trigger color
+tolerance = 10                 # acceptable color variation
 # ----------------------------------------
 
-pyautogui.FAILSAFE = True  # move mouse to top-left corner to stop safely
+# Pre-initialize everything for maximum speed
+mouse = Controller()
+sct = mss.mss()
+monitor = {"top": y, "left": x, "width": 1, "height": 1}
 
-def color_is_close(c1, c2, tol):
-    return all(abs(a - b) <= tol for a, b in zip(c1, c2))
+# Pre-set mouse position once to avoid repeated positioning
+mouse.position = (x, y)
 
-def get_pixel_color(sct, x, y):
-    img = sct.grab({"top": y, "left": x, "width": 1, "height": 1})
-    return img.pixel(0, 0)  # returns (r, g, b)
+# Pre-calculate color bounds for faster comparison
+idle_min = tuple(c - tolerance for c in idle_color)
+idle_max = tuple(c + tolerance for c in idle_color)
+target_min = tuple(c - tolerance for c in target_color)
+target_max = tuple(c + tolerance for c in target_color)
 
-def main():
-    sct = mss.mss()
-    prev_state = None
-    print(f"Watching pixel ({x}, {y}) for state changes...")
-    print("Move mouse to top-left corner to abort.\n")
+# Optimized color comparison using bounds checking
+def is_idle_color(pixel):
+    return all(idle_min[i] <= pixel[i] <= idle_max[i] for i in range(3))
 
-    try:
-        while True:
-            pixel = get_pixel_color(sct, x, y)
+def is_target_color(pixel):
+    return all(target_min[i] <= pixel[i] <= target_max[i] for i in range(3))
 
-            if color_is_close(pixel, idle_color, tolerance):
-                current_state = "idle"
-            elif color_is_close(pixel, target_color, tolerance):
-                current_state = "green"
-            else:
-                current_state = "other"
+prev_state = None
 
-            # Click only when state switches between idle and green
-            if current_state != prev_state:
-                if current_state in ["idle", "green"]:
-                    print(f"{time.strftime('%H:%M:%S')} Detected {current_state} → click")
-                    pyautogui.click(x, y)
-                    time.sleep(click_delay)
-                prev_state = current_state
+# ✅ Ultra-fast main loop - removed all unnecessary delays
+try:
+    while True:
+        # Direct pixel access - fastest method
+        pixel = sct.grab(monitor).pixel(0, 0)
 
-            time.sleep(poll_delay)
-    except KeyboardInterrupt:
-        print("\nStopped by user.")
-    except pyautogui.FailSafeException:
-        print("\nStopped by moving mouse to top-left corner.")
+        # Fast state determination
+        if is_idle_color(pixel):
+            current_state = "idle"
+        elif is_target_color(pixel):
+            current_state = "green"
+        else:
+            current_state = "other"
 
-if __name__ == "__main__":
-    main()
+        # Instant click on state change - no delays
+        if current_state != prev_state and current_state in ["idle", "green"]:
+            mouse.click(Button.left, 1)
+            prev_state = current_state
+
+except KeyboardInterrupt:
+    pass  # Ctrl+C to exit
+
+except Exception as e:
+    print("Stopped:", e)
